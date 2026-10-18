@@ -110,7 +110,25 @@ function fromCourses(prev, next, actor) {
   return out;
 }
 
-const RULES = { 'ledger:tasks:v1': fromTasks, 'ledger:courses:v1': fromCourses };
+// Руководитель принял решение по блюду — оповещаем автора.
+function fromDishLab(prev, next, actor) {
+  const before = new Map((Array.isArray(prev) ? prev : []).map((d) => [d?.id, d]));
+  const out = [];
+  for (const d of Array.isArray(next) ? next : []) {
+    const old = before.get(d?.id);
+    if (!old || old.status === d.status || d.status === 'review' || !d.createdById || d.createdById === actor.id) continue;
+    out.push({
+      userId: d.createdById,
+      type: d.status === 'approved' ? 'dish_approved' : 'dish_rejected',
+      title: `${d.status === 'approved' ? 'Блюдо согласовано' : 'Блюдо отклонено'}: «${d.title || 'Без названия'}»`,
+      detail: d.decision?.note ? `«${String(d.decision.note).slice(0, 140)}»` : '',
+      link: { page: 'dishlab', id: d.id },
+    });
+  }
+  return out;
+}
+
+const RULES = { 'ledger:tasks:v1': fromTasks, 'ledger:courses:v1': fromCourses, 'ledger:dish-lab:v1': fromDishLab };
 
 export function createNotifications({ file, auth }) {
   let data = null;

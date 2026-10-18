@@ -7,6 +7,8 @@ import { validators } from './server/rules.js';
 import { createNotifications } from './server/notifications.js';
 import { createReviews } from './server/reviews.js';
 import { createTraining } from './server/training.js';
+import { createAccess, writeGuard } from './server/access.js';
+import { createScreens } from './server/screens.js';
 import { pnlAnalysisPlugin } from './server/pnlAnalysis.js';
 
 export default defineConfig(({ mode }) => {
@@ -15,9 +17,16 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const auth = createAuth({ file: path.resolve('server/data/auth.json'), env });
   const notifications = createNotifications({ file: path.resolve('server/data/notifications.json'), auth });
-  const data = createData({ dir: path.resolve('server/data'), auth, validators, onSaved: notifications.onSaved });
-  const reviews = createReviews({ env, auth, file: path.resolve('server/data/reviews.json') });
-  const training = createTraining({ file: path.resolve('server/data/training.json'), auth, data });
+  let screens = null;
+  const onSaved = async (key, ...rest) => {
+    screens?.onDataSaved(key);
+    return notifications.onSaved(key, ...rest);
+  };
+  const data = createData({ dir: path.resolve('server/data'), auth, validators, onSaved, guard: writeGuard });
+  const access = createAccess(data);
+  const reviews = createReviews({ env, auth, file: path.resolve('server/data/reviews.json'), access });
+  const training = createTraining({ file: path.resolve('server/data/training.json'), auth, data, access });
+  screens = createScreens({ file: path.resolve('server/data/screens.json'), auth, data });
   return {
     plugins: [
       react(),
@@ -29,6 +38,7 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use(notifications.handler);
           server.middlewares.use(reviews.handler);
           server.middlewares.use(training.handler);
+          server.middlewares.use(screens.handler);
         },
       },
       pnlAnalysisPlugin(env, auth),

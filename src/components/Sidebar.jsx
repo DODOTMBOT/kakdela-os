@@ -5,10 +5,10 @@ import {
   IconBulb,
   IconCalendar,
   IconChart,
-  IconCheckSquare,
   IconChevronRight,
   IconClipboard,
   IconClock,
+  IconEdit,
   IconFolder,
   IconGraduation,
   IconHome,
@@ -23,7 +23,7 @@ import {
 } from './Icons.jsx';
 import logo from '../assets/kakdela-logo.png';
 import { initials } from '../api.js';
-import { roleLabel } from '../access.js';
+import { canOpen, roleLabel } from '../access.js';
 import { useNotifications } from '../notifications.js';
 
 // Структура меню. Пункт с children — раскрывающийся раздел.
@@ -31,25 +31,38 @@ import { useNotifications } from '../notifications.js';
 // чтобы вернуть — удалите hidden). separated — группа визуально отделена от остальных.
 export const NAV = [
   {
-    title: 'Рабочее пространство',
+    title: 'Основное',
     items: [
       { id: 'home', label: 'Главная', Icon: IconHome },
-      { id: 'tasks', label: 'Задачи', Icon: IconCheckSquare },
+      { id: 'thoughts', label: 'Пространство мыслей', Icon: IconEdit },
     ],
   },
   {
-    title: 'Управление кафе',
+    title: 'Работа кафе',
     items: [
-      { id: 'menu', label: 'Меню', Icon: IconBookOpen },
-      { id: 'shifts', label: 'Смены', Icon: IconClock },
-      { id: 'standards', label: 'Стандарты', Icon: IconClipboard },
-      { id: 'training', label: 'Обучение', Icon: IconGraduation },
+      {
+        id: 'menu-group',
+        label: 'Меню',
+        Icon: IconBookOpen,
+        children: [
+          { id: 'menu', label: 'Основное и сезонные меню', Icon: IconBookOpen },
+          { id: 'dishlab', label: 'Проработка и тесты', Icon: IconBookOpen },
+        ],
+      },
+      { id: 'tv', label: 'Управление ТВ', Icon: IconSliders },
       {
         id: 'quality-group',
         label: 'Контроль качества',
         Icon: IconShieldCheck,
         children: [{ id: 'reviews', label: 'Отзывы', Icon: IconShieldCheck }],
       },
+    ],
+  },
+  {
+    title: 'Знания и команда',
+    items: [
+      { id: 'standards', label: 'Стандарты', Icon: IconClipboard },
+      { id: 'training', label: 'Обучение', Icon: IconGraduation },
       { id: 'docs', label: 'Документы', Icon: IconFolder },
     ],
   },
@@ -66,20 +79,18 @@ export const NAV = [
           { id: 'collabs', label: 'Коллаборации', Icon: IconLink },
         ],
       },
-      { id: 'ideas', label: 'Идеи', Icon: IconBulb },
+      { id: 'ideas', label: 'Доска идей', Icon: IconBulb },
       { id: 'openings', label: 'Открытие точек', Icon: IconMapPinPlus },
     ],
   },
   {
-    title: 'Управление',
+    title: 'Администрирование',
     separated: true,
     items: [
-      // soon — раздел в разработке: виден в меню, но открыть его нельзя.
-      { id: 'finance', label: 'Финансы', Icon: IconWallet, soon: true },
-      { id: 'analytics', label: 'Аналитика', Icon: IconChart, soon: true },
+      { id: 'users', label: 'Пользователи', Icon: IconUsers, adminOnly: true },
+      { id: 'roles', label: 'Роли и доступ', Icon: IconShieldCheck, adminOnly: true },
       // Скрытый модуль финмодели и анализа P&L — страница /reports работает, в меню не показывается.
       { id: 'reports', label: 'Анализ отчётности', Icon: IconChart, hidden: true },
-      { id: 'users', label: 'Пользователи', Icon: IconUsers, adminOnly: true },
       { id: 'network', label: 'Настройки сети', Icon: IconSliders },
     ],
   },
@@ -88,7 +99,7 @@ export const NAV = [
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
 const groupOf = (page) => NAV.flatMap((g) => g.items).find((i) => i.children?.some((c) => c.id === page))?.id;
 
-export default function Sidebar({ page, onPage, user, onChangePassword, onLogout }) {
+export default function Sidebar({ page, onPage, user, access, onChangePassword, onLogout }) {
   const [open, setOpen] = useState(() => new Set([groupOf(page)].filter(Boolean)));
   const [account, setAccount] = useState(false);
   const [sheet, setSheet] = useState(false);
@@ -132,12 +143,18 @@ export default function Sidebar({ page, onPage, user, onChangePassword, onLogout
     onPage(id);
   };
 
-  const visible = (item) => !item.hidden && (!item.adminOnly || user.role === 'admin');
+  // Пункт виден, если роль может открыть раздел; раздел с подразделами — если открыт хотя бы один из них.
+  const visible = (item) => {
+    if (item.hidden || (item.adminOnly && user.role !== 'admin')) return false;
+    if (item.children) return item.children.some(visible);
+    return canOpen(user, item.id, access);
+  };
 
   const renderItem = (item, { child = false, forceOpen = false } = {}) => {
     // Иконки (Icon) в меню не показываем — они используются на страницах-заглушках.
     const { id, label, children } = item;
     if (children) {
+      const shownChildren = children.filter(visible);
       const expanded = forceOpen || open.has(id);
       const hasActive = children.some((c) => c.id === page);
       return (
@@ -150,15 +167,7 @@ export default function Sidebar({ page, onPage, user, onChangePassword, onLogout
             <span className="sb-label">{label}</span>
             {!forceOpen && <IconChevronRight size={14} className="sb-chevron" />}
           </button>
-          {expanded && <div className="sb-children">{children.map((c) => renderItem(c, { child: true }))}</div>}
-        </div>
-      );
-    }
-    if (item.soon) {
-      return (
-        <div key={id} className="sb-item is-soon" aria-disabled="true" title="Раздел в разработке">
-          <span className="sb-label">{label}</span>
-          <span className="sb-soon">скоро</span>
+          {expanded && <div className="sb-children">{shownChildren.map((c) => renderItem(c, { child: true }))}</div>}
         </div>
       );
     }
@@ -196,9 +205,14 @@ export default function Sidebar({ page, onPage, user, onChangePassword, onLogout
         <span>{user.login}</span>
       </div>
       {user.role === 'admin' && (
-        <button role="menuitem" className={page === 'users' ? 'is-active' : ''} onClick={() => go('users')}>
-          Пользователи
-        </button>
+        <>
+          <button role="menuitem" className={page === 'users' ? 'is-active' : ''} onClick={() => go('users')}>
+            Пользователи
+          </button>
+          <button role="menuitem" className={page === 'roles' ? 'is-active' : ''} onClick={() => go('roles')}>
+            Роли и доступ
+          </button>
+        </>
       )}
       <button
         role="menuitem"
@@ -261,9 +275,11 @@ export default function Sidebar({ page, onPage, user, onChangePassword, onLogout
       <div className="sb-tabbar">
         {[
           { id: 'home', label: 'Главная' },
-          { id: 'tasks', label: 'Задачи' },
+          { id: 'thoughts', label: 'Мысли' },
           { id: 'notifications', label: 'Оповещения', badge: true },
-        ].map(({ id, label, badge }) => (
+        ]
+          .filter(({ id }) => canOpen(user, id, access))
+          .map(({ id, label, badge }) => (
           <button key={id} className={`sb-tab ${page === id && !sheet ? 'is-active' : ''}`} onClick={() => go(id)}>
             <span className="sb-tab-label">{label}</span>
             {badge && bellBadge}

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useShared } from '../sync.js';
-import { canSee, visibleRecords } from '../access.js';
-import { TASKS_KEY, isOverdue } from '../tasks.js';
+import { canOpen, canSee, visibleRecords } from '../access.js';
 import { CAL_KEY, calTypeById, calendarEvents, endOf } from '../calendar.js';
 import { MENUS_KEY, todayIso } from '../menus.js';
 import { EVENTS_KEY, FORMATS, label, modeText } from '../cafeEvents.js';
@@ -11,6 +10,7 @@ import { iso } from '../data.js';
 import { MONTHS_GEN, fmtMoney } from '../utils.js';
 import { useNotifications } from '../notifications.js';
 import { NotificationItem } from './NotificationsPage.jsx';
+import { ThoughtForm } from './ThoughtsPage.jsx';
 import { api } from '../api.js';
 import { onRefresh } from '../users.js';
 
@@ -20,7 +20,6 @@ const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 const WEEKDAYS_FULL = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 const PHASE_LABEL = Object.fromEntries(PHASES);
 const KIND_LABEL = Object.fromEntries(KINDS);
-const PRIORITY_LABEL = { high: 'высокий', normal: 'обычный', low: 'низкий' };
 
 const parse = (s) => {
   const [y, m, d] = s.split('-').map(Number);
@@ -43,13 +42,6 @@ function when(date, today) {
 }
 
 const period = (start, end) => (end && end !== start ? `${shortDate(start)} – ${shortDate(end)}` : shortDate(start));
-
-// Задача «моя», если она назначена на мою учётную запись; у старых задач — по имени или логину.
-const isMine = (task, user) => {
-  if (task.assigneeId) return task.assigneeId === user.id;
-  const who = (task.assignee || '').trim().toLowerCase();
-  return Boolean(who) && (who === user.name.trim().toLowerCase() || who === user.login);
-};
 
 const inWindow = (start, end, today, horizon) => start <= horizon && (end || start) >= today;
 
@@ -178,21 +170,12 @@ export default function HomePage({ user, open }) {
   const today = todayIso();
   const horizon = addDays(today, HORIZON_DAYS - 1);
 
-  const [tasksRaw, setTasks] = useShared(TASKS_KEY, []);
   const [calRaw] = useShared(CAL_KEY, []);
   const [menusRaw] = useShared(MENUS_KEY, []);
   const [cafeRaw] = useShared(EVENTS_KEY, []);
   const [collabsRaw] = useShared(COLLABS_KEY, EMPTY_COLLABS);
   const [ideasRaw] = useShared(IDEAS_KEY, []);
   const notifications = useNotifications();
-
-  const tasks = useMemo(() => {
-    const open = visibleRecords(user, 'tasks', tasksRaw).filter((t) => !t.done);
-    const mine = open
-      .filter((t) => isMine(t, user))
-      .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.priority === 'high' ? -1 : b.priority === 'high' ? 1 : 0));
-    return { open: open.length, mine, overdue: mine.filter((t) => isOverdue(t, today)).length };
-  }, [tasksRaw, user, today]);
 
   const calendar = useMemo(() => {
     // Ровно то же, что в разделе «Календарь»: ручные события, доп. меню, мероприятия, коллаборации.
@@ -235,11 +218,13 @@ export default function HomePage({ user, open }) {
   }, [ideasRaw, user]);
 
   const [reviewsData, setReviewsData] = useState(null);
+  const reviewsOpen = canOpen(user, 'reviews');
   useEffect(() => {
+    if (!reviewsOpen) return setReviewsData(null);
     const load = () => api('/api/reviews').then(setReviewsData, () => {});
     load();
     return onRefresh(load, 120_000);
-  }, []);
+  }, [reviewsOpen]);
   const reviews = useMemo(() => {
     if (!reviewsData) return null;
     const all = reviewsData.reviews ?? [];
@@ -248,9 +233,6 @@ export default function HomePage({ user, open }) {
       { key: 'all', title: 'Всего', stats: reviewStats(all) },
     ];
   }, [reviewsData]);
-
-  const closeTask = (id) =>
-    setTasks((list) => list.map((t) => (t.id === id ? { ...t, done: true, closedAt: new Date().toISOString() } : t)));
 
   const now = new Date();
 
@@ -286,57 +268,16 @@ export default function HomePage({ user, open }) {
             </Block>
         </Section>
 
-        {canSee(user, 'tasks') && (
-          <Section title="Задачи">
-                {canSee(user, 'tasks') && (
-                  <Block
-                    title="Мои задачи"
-                    count={tasks.mine.length}
-                    note={tasks.overdue ? <span className="hb-alert">просрочено {tasks.overdue}</span> : `всего открыто ${tasks.open}`}
-                    onOpen={() => open('tasks')}
-                  >
-                    <List
-                      items={tasks.mine}
-                      empty="На вас нет открытых задач"
-                      renderHead={(t, isOpen, toggle) => (
-                        <Row
-                          open={isOpen}
-                          onToggle={toggle}
-                          lead={
-                            <input
-                              type="checkbox"
-                              className="hl-check"
-                              aria-label={`Закрыть задачу «${t.title}»`}
-                              onChange={() => closeTask(t.id)}
-                            />
-                          }
-                          date={t.due ? when(t.due, today) : 'без срока'}
-                          dateClass={isOverdue(t, today) ? 'is-overdue' : ''}
-                          title={t.title}
-                          tag={t.priority === 'high' ? <span className="task-flag">Важно</span> : null}
-                        />
-                      )}
-                      renderBody={(t) => (
-                        <>
-                          {t.note && <p className="hl-text">{t.note}</p>}
-                          <Facts
-                            items={[
-                              ['Срок', t.due ? `${when(t.due, today)}${isOverdue(t, today) ? ' — просрочено' : ''}` : 'не указан'],
-                              ['Приоритет', PRIORITY_LABEL[t.priority]],
-                              ['Поставил', t.createdById && t.createdById !== user.id ? t.createdByName : null],
-                            ]}
-                          />
-                          <OpenLink onClick={() => open('tasks', t.id)}>Открыть задачу</OpenLink>
-                        </>
-                      )}
-                    />
-                  </Block>
-                )}
+        {canOpen(user, 'thoughts') && (
+          <Section title="Пространство мыслей">
+            <Block title="Поделиться мыслью" onOpen={() => open('thoughts')}>
+              <ThoughtForm user={user} compact />
+            </Block>
           </Section>
         )}
 
         {canSee(user, 'ideas') && (
-          <Section title="Идеи">
+          <Section title="Доска идей">
                 {canSee(user, 'ideas') && (
                   <Block title="По стадиям" count={ideas.total} onOpen={() => open('ideas')}>
                     <ul className="hi-stages">
@@ -371,7 +312,7 @@ export default function HomePage({ user, open }) {
           </Section>
         )}
 
-        {reviews && (
+        {reviewsOpen && reviews && (
           <Section title="Отзывы" wide single>
             <Block title="Оценки гостей" count={reviews.at(-1).stats.total} note="по загруженным отзывам" onOpen={() => open('reviews')}>
               <div className="hr-cols">

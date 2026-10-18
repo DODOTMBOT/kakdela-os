@@ -112,10 +112,10 @@ export default function UsersPage({ me }) {
     },
     profile: {
       title: edit?.user?.name ?? '',
-      // У супер-админа роль не меняется — только имя и должность.
+      // У владельца системы и у себя роль здесь не меняется — только имя и должность.
       fields: [
         { name: 'name', label: 'Имя', required: true },
-        ...(edit?.user?.role === 'admin' ? [{ ...POSITION_FIELD, row: undefined }] : [ROLE_FIELD, POSITION_FIELD]),
+        ...(edit?.user?.owner || edit?.user?.id === me.id ? [{ ...POSITION_FIELD, row: undefined }] : [ROLE_FIELD, POSITION_FIELD]),
       ],
       initial: edit?.user,
       onSave: async (v) => {
@@ -199,6 +199,7 @@ export default function UsersPage({ me }) {
                 <b>
                   {u.name}
                   {isMe && <span className="user-me">это вы</span>}
+                  {u.owner && <span className="user-me">владелец</span>}
                 </b>
                 <span>{[u.position, roleLabel(u.role)].filter(Boolean).join(' · ')}</span>
                 <span className="user-login">{u.login}</span>
@@ -209,7 +210,7 @@ export default function UsersPage({ me }) {
                 {confirm !== u.id && (
                   <button className="link-btn" onClick={() => setEdit({ kind: 'profile', user: u })}>Изменить</button>
                 )}
-                {u.role !== 'admin' &&
+                {!u.owner && !isMe &&
                   (confirm === u.id ? (
                     <>
                       <span className="user-confirm">Удалить {u.name}?</span>

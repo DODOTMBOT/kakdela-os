@@ -5,12 +5,15 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { createAuth } from './auth.js';
 import { createData } from './data.js';
 import { validators } from './rules.js';
 import { createNotifications } from './notifications.js';
 import { createReviews } from './reviews.js';
 import { createTraining } from './training.js';
+import { createAccess, writeGuard } from './access.js';
+import { createScreens } from './screens.js';
 import { createPnlHandler } from './pnlAnalysis.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,10 +26,26 @@ const secure = env.COOKIE_SECURE === '1';
 
 const auth = createAuth({ file: path.join(dataDir, 'auth.json'), env, secure, trustProxy: true });
 const notifications = createNotifications({ file: path.join(dataDir, 'notifications.json'), auth });
-const data = createData({ dir: dataDir, auth, validators, onSaved: notifications.onSaved });
-const reviews = createReviews({ env, auth, file: path.join(dataDir, 'reviews.json') });
-const training = createTraining({ file: path.join(dataDir, 'training.json'), auth, data });
-const handlers = [auth.handler, data.handler, notifications.handler, reviews.handler, training.handler, createPnlHandler(env, auth)];
+// После сохранения раздела: оповещения людям и обновление экранов ТВ (если поменялось меню).
+let screens = null;
+const onSaved = async (key, ...rest) => {
+  screens?.onDataSaved(key);
+  return notifications.onSaved(key, ...rest);
+};
+const data = createData({ dir: dataDir, auth, validators, onSaved, guard: writeGuard });
+const access = createAccess(data);
+const reviews = createReviews({ env, auth, file: path.join(dataDir, 'reviews.json'), access });
+const training = createTraining({ file: path.join(dataDir, 'training.json'), auth, data, access });
+// Версия сайта — по содержимому собранной страницы; меняется с каждой выкладкой.
+const siteVersion = (() => {
+  try {
+    return createHash('sha256').update(fs.readFileSync(path.join(distDir, 'index.html'))).digest('hex').slice(0, 12);
+  } catch {
+    return 'dev';
+  }
+})();
+screens = createScreens({ file: path.join(dataDir, 'screens.json'), auth, data, secure, version: siteVersion });
+const handlers = [auth.handler, data.handler, notifications.handler, reviews.handler, training.handler, screens.handler, createPnlHandler(env, auth)];
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',

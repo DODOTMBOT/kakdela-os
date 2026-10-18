@@ -339,7 +339,7 @@ export default function MenuPage({ focusId }) {
   return (
     <>
       <div className="page-head">
-        <h1>Меню</h1>
+        <h1>Основное и сезонные меню</h1>
         <button className="btn btn-primary btn-icon" onClick={() => newMenu({ type: 'main', parentId: mains[0]?.id, start: todayIso() })}>
           <IconPlus size={16} />
           Добавить меню

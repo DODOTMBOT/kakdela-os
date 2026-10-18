@@ -10,7 +10,9 @@ import MarketingPage from './components/MarketingPage.jsx';
 import IdeasPage from './components/IdeasPage.jsx';
 import DocsPage from './components/DocsPage.jsx';
 import FinModelPage from './components/FinModelPage.jsx';
-import TasksPage from './components/TasksPage.jsx';
+import ThoughtsPage from './components/ThoughtsPage.jsx';
+import DishLabPage from './components/DishLabPage.jsx';
+import TvPage from './components/TvPage.jsx';
 import CollabsPage from './components/CollabsPage.jsx';
 import EventsPage from './components/EventsPage.jsx';
 import UsersPage from './components/UsersPage.jsx';
@@ -18,7 +20,9 @@ import StandardsPage from './components/StandardsPage.jsx';
 import TrainingPage from './components/TrainingPage.jsx';
 import EditModal from './components/EditModal.jsx';
 import { api } from './api.js';
-import { useSyncRejection, useSyncStatus } from './sync.js';
+import { useShared, useSyncRejection, useSyncStatus } from './sync.js';
+import { ACCESS_KEY, canOpen } from './access.js';
+import RolesPage from './components/RolesPage.jsx';
 
 const PASSWORD_FIELDS = [
   { name: 'current', label: 'Текущий пароль', type: 'password', required: true },
@@ -30,8 +34,10 @@ const PASSWORD_FIELDS = [
 const ROUTES = {
   home: '/',
   notifications: '/notifications',
-  tasks: '/tasks',
+  thoughts: '/thoughts',
   menu: '/menu',
+  dishlab: '/menu/lab',
+  tv: '/screens',
   marketing: '/calendar',
   events: '/events',
   collabs: '/collabs',
@@ -39,6 +45,7 @@ const ROUTES = {
   docs: '/docs',
   reports: '/reports',
   users: '/users',
+  roles: '/settings/roles',
   // Разделы в разработке.
   shifts: '/shifts',
   standards: '/standards',
@@ -52,11 +59,13 @@ const ROUTES = {
 const COMING_SOON = new Set(['shifts', 'openings', 'finance', 'analytics', 'network']);
 // Разделы в разработке, закрытые для перехода (в меню помечены «скоро»).
 const LOCKED = new Set(NAV.flatMap((g) => g.items).filter((i) => i.soon).map((i) => i.id));
-const navItem = (id) => NAV.flatMap((g) => g.items).find((i) => i.id === id);
+const navItem = (id) => NAV.flatMap((g) => g.items.flatMap((i) => [i, ...(i.children ?? [])])).find((i) => i.id === id);
 const PAGE_BY_PATH = {
   ...Object.fromEntries(Object.entries(ROUTES).map(([page, path]) => [path, page])),
   // «Контроль качества» стал разделом с подразделами; старый адрес ведёт к отзывам.
   '/quality': 'reviews',
+  // «Задачи» заменены «Пространством мыслей»; старые ссылки и оповещения ведут туда.
+  '/tasks': 'thoughts',
 };
 // Плавная смена страниц: где браузер умеет View Transitions, старая страница гаснет, а новая проявляется.
 function withTransition(update) {
@@ -80,6 +89,8 @@ const pageFromLocation = () => {
 };
 
 export default function App({ user, setUser, logout }) {
+  // Доступ ролей к разделам: меняется супер-админом и сразу применяется у всех.
+  const [access] = useShared(ACCESS_KEY, {});
   const [page, setPage] = useState(pageFromLocation);
   const [passwordForm, setPasswordForm] = useState(false);
   // Какую запись открыть при переходе из календаря или со сводки.
@@ -89,6 +100,7 @@ export default function App({ user, setUser, logout }) {
   const [taskFocus, setTaskFocus] = useState(null);
 
   const open = useCallback((target, id = null) => {
+    if (target === 'tasks') target = 'thoughts';
     if (LOCKED.has(target)) return;
     withTransition(() => {
       setMenuFocus(target === 'menu' ? id : null);
@@ -123,11 +135,20 @@ export default function App({ user, setUser, logout }) {
         page={page}
         onPage={(p) => open(p)}
         user={user}
+        access={access}
         onChangePassword={() => setPasswordForm(true)}
         onLogout={logout}
       />
 
-      {COMING_SOON.has(page) ? (
+      {!canOpen(user, page, access) ? (
+        <main className="main" key={`${page}-closed`}>
+          <NoAccess title={navItem(page)?.label} onHome={() => open('home')} />
+        </main>
+      ) : page === 'roles' ? (
+        <main className="main" key={page}>
+          <RolesPage />
+        </main>
+      ) : COMING_SOON.has(page) ? (
         <main className="main" key={page}>
           <ComingSoonPage key={page} title={navItem(page).label} Icon={navItem(page).Icon} />
         </main>
@@ -163,9 +184,17 @@ export default function App({ user, setUser, logout }) {
         <main className="main" key={page}>
           <CollabsPage key={collabFocus ?? 'collabs'} focusId={collabFocus} />
         </main>
-      ) : page === 'tasks' ? (
+      ) : page === 'tv' ? (
         <main className="main" key={page}>
-          <TasksPage key={taskFocus ?? 'tasks'} user={user} focusId={taskFocus} />
+          <TvPage />
+        </main>
+      ) : page === 'dishlab' ? (
+        <main className="main" key={page}>
+          <DishLabPage user={user} />
+        </main>
+      ) : page === 'thoughts' ? (
+        <main className="main" key={page}>
+          <ThoughtsPage user={user} />
         </main>
       ) : page === 'reports' ? (
         <main className="main" key={page}>
@@ -233,4 +262,15 @@ function SyncNotice() {
   if (rejected) return <div className="sync-notice is-rejected" role="alert">{rejected}</div>;
   if (status !== 'error') return null;
   return <div className="sync-notice" role="status">Нет связи с сервером — изменения сохранятся, когда связь появится</div>;
+}
+
+// Раздел закрыт для роли — по прямой ссылке показываем, а не перекидываем молча.
+function NoAccess({ title, onHome }) {
+  return (
+    <div className="soon">
+      <h2>Нет доступа</h2>
+      <p>{title ? `Раздел «${title}» закрыт для вашей роли.` : 'Этот раздел закрыт для вашей роли.'} Если доступ нужен, обратитесь к супер-админу.</p>
+      <button className="link-btn soon-home" onClick={onHome}>На главную</button>
+    </div>
+  );
 }

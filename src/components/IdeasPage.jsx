@@ -92,7 +92,7 @@ export default function IdeasPage() {
   return (
     <>
       <div className="page-head">
-        <h1>Идеи</h1>
+        <h1>Доска идей</h1>
         {ideas.length > 0 && (
           <span className="page-count">{ideas.length} {plural(ideas.length, ['идея', 'идеи', 'идей'])}</span>
         )}
@@ -178,7 +178,10 @@ export default function IdeasPage() {
                     >
                       <span className="idea-title">{i.title}</span>
                       {i.note && <span className="idea-note">{i.note}</span>}
-                      <span className="idea-date">{fmtDay(i.date)}</span>
+                      <span className="idea-date">
+                        {fmtDay(i.date)}
+                        {i.authorName && ` · ${i.authorName}`}
+                      </span>
                     </button>
                   </Fragment>
                 ))}

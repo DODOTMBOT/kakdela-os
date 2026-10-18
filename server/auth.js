@@ -52,11 +52,13 @@ function loginProblem(login) {
   return null;
 }
 
-// Роли: супер-админ (один, создаётся из .env), руководитель и сотрудник. Должность — свободный текст.
-const ROLES = ['manager', 'employee'];
+// Роли: супер-админ, руководитель и сотрудник. Должность — свободный текст.
+// Первый супер-админ (создаётся из .env) — владелец системы: его роль, доступ и учётную запись
+// изменить или удалить нельзя, чтобы в системе всегда оставался хотя бы один супер-админ.
+const ROLES = ['admin', 'manager', 'employee'];
 // Пользователи, созданные до появления ролей, считаются сотрудниками.
 const roleOf = (u) => (u.role === 'user' || !u.role ? 'employee' : u.role);
-const roleProblem = (role) => (ROLES.includes(role) ? null : 'Выберите роль: руководитель или сотрудник');
+const roleProblem = (role) => (ROLES.includes(role) ? null : 'Выберите роль: супер-админ, руководитель или сотрудник');
 const cleanPosition = (p) => String(p ?? '').trim().slice(0, 80);
 
 const publicUser = (u) => ({
@@ -64,6 +66,7 @@ const publicUser = (u) => ({
   login: u.login,
   name: u.name,
   role: roleOf(u),
+  owner: Boolean(u.owner),
   position: u.position ?? '',
   disabled: Boolean(u.disabled),
   mustChange: Boolean(u.mustChange),
@@ -162,7 +165,14 @@ export function createAuth({ file, env, secure = false, trustProxy = false }) {
   // Супер-админ создаётся один раз; дальше пароль меняется уже в интерфейсе.
   const ready = (async () => {
     const data = await store.get();
-    if (data.users.some((u) => u.role === 'admin')) return;
+    if (data.users.some((u) => u.role === 'admin')) {
+      // Владелец — первый супер-админ (у баз до появления этой отметки ставим её один раз).
+      if (!data.users.some((u) => u.owner)) {
+        data.users.find((u) => u.role === 'admin').owner = true;
+        await store.save();
+      }
+      return;
+    }
     const login = (env.ADMIN_LOGIN || '').trim().toLowerCase();
     const password = env.ADMIN_PASSWORD || '';
     if (loginProblem(login) || passwordProblem(password)) {
@@ -174,6 +184,7 @@ export function createAuth({ file, env, secure = false, trustProxy = false }) {
       login,
       name: env.ADMIN_NAME || 'Администратор',
       role: 'admin',
+      owner: true,
       passwordHash: await hashPassword(password),
       mustChange: true,
       createdAt: now(),
@@ -348,12 +359,15 @@ export function createAuth({ file, env, secure = false, trustProxy = false }) {
     if (userMatch) {
       const user = data.users.find((u) => u.id === userMatch[1]);
       if (!user) throw fail(404, 'Пользователь не найден');
-      const isAdmin = user.role === 'admin';
+      const isOwner = Boolean(user.owner);
       if (method === 'PATCH') {
         const body = await readJson(req);
-        // У супер-админа здесь меняются только имя и должность; пароль — через «Сменить пароль».
-        if (isAdmin && (body.role !== undefined || body.disabled !== undefined || body.password !== undefined)) {
-          throw fail(400, 'Роль, доступ и пароль супер-админа здесь не меняются');
+        // У владельца здесь меняются только имя и должность; пароль — через «Сменить пароль».
+        if (isOwner && (body.role !== undefined || body.disabled !== undefined || body.password !== undefined)) {
+          throw fail(400, 'Роль, доступ и пароль владельца системы здесь не меняются');
+        }
+        if (user.id === me.id && (body.disabled === true || (body.role !== undefined && body.role !== 'admin'))) {
+          throw fail(400, 'Свою роль и доступ может изменить другой супер-админ');
         }
         if (typeof body.name === 'string' && body.name.trim()) user.name = body.name.trim().slice(0, 80);
         if (body.position !== undefined) user.position = cleanPosition(body.position);
@@ -377,7 +391,8 @@ export function createAuth({ file, env, secure = false, trustProxy = false }) {
         return send(res, 200, { user: publicUser(user) });
       }
       if (method === 'DELETE') {
-        if (isAdmin) throw fail(400, 'Супер-админа удалить нельзя');
+        if (isOwner) throw fail(400, 'Владельца системы удалить нельзя');
+        if (user.id === me.id) throw fail(400, 'Нельзя удалить самого себя');
         data.users = data.users.filter((u) => u.id !== user.id);
         revokeSessions(data, user.id);
         await store.save();

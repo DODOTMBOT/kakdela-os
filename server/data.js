@@ -40,7 +40,8 @@ function readBody(req, limit) {
 
 // validators — правила для отдельных разделов (см. rules.js);
 // onSaved(key, prev, next, user) — после сохранения, возвращает id пользователей, которым пришли оповещения.
-export function createData({ dir, auth, validators = {}, onSaved }) {
+// guard(key, user, read, next) — общая проверка доступа к разделу перед сохранением (см. access.js).
+export function createData({ dir, auth, validators = {}, onSaved, guard }) {
   const kvDir = path.join(dir, 'kv');
   const filesDir = path.join(dir, 'files');
   const docs = new Map();
@@ -120,7 +121,7 @@ export function createData({ dir, auth, validators = {}, onSaved }) {
       const current = docs.get(key);
       const version = current?.version ?? 0;
       if (body.baseVersion !== version) return send(res, 409, current ? view(current) : { value: null, version: 0 });
-      const problem = validators[key]?.(current?.value ?? null, body.value, user);
+      const problem = guard?.(key, user, (k) => docs.get(k)?.value ?? null, body.value) || validators[key]?.(current?.value ?? null, body.value, user);
       if (problem) return send(res, 403, { error: problem });
       const doc = { key, value: body.value, version: version + 1, updatedAt: new Date().toISOString(), updatedBy: user.name };
       docs.set(key, doc);
@@ -207,11 +208,23 @@ export function createData({ dir, auth, validators = {}, onSaved }) {
     }
   };
 
+  // Файл из хранилища для серверного кода (например, для экранов ТВ): путь, тип и размер.
+  const fileInfo = async (id) => {
+    if (!FILE_ID_RE.test(id)) return null;
+    const file = path.join(filesDir, id);
+    try {
+      const meta = JSON.parse(await fs.readFile(`${file}.meta.json`, 'utf8'));
+      return { path: file, type: meta.type, size: meta.size };
+    } catch {
+      return null;
+    }
+  };
+
   // Чтение раздела из серверного кода (например, курсов — для проверки тестов).
   const get = async (key) => {
     await ready;
     return docs.get(key)?.value ?? null;
   };
 
-  return { handler, get };
+  return { handler, get, fileInfo };
 }

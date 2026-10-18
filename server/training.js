@@ -58,7 +58,7 @@ export function isComplete(course, rec) {
   return (lessons.length > 0 || Boolean(course.test?.questions?.length)) && lessonsOk && testOk;
 }
 
-export function createTraining({ file, auth, data }) {
+export function createTraining({ file, auth, data, access }) {
   let state = null;
   let chain = Promise.resolve();
 
@@ -115,6 +115,7 @@ export function createTraining({ file, auth, data }) {
       if (req.method !== 'GET' && origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Запрос с чужого сайта' });
       const user = await auth.userFrom(req);
       if (!user) return send(res, 401, { error: 'Нужно войти' });
+      if (access && !(await access.allowed(user, 'training'))) return send(res, 403, { error: 'Раздел закрыт для вашей роли' });
       const d = await load();
 
       // Прогресс: руководитель видит всю команду, сотрудник — только себя.

@@ -47,7 +47,7 @@ const pick = (r) => ({
   deleted: Boolean(r.is_deleted),
 });
 
-export function createReviews({ env, auth, file }) {
+export function createReviews({ env, auth, file, access }) {
   const key = env.REWIO_API_KEY;
   const objectId = Number(env.REWIO_OBJECT_ID || 817);
   const links = parseLinks(env.REWIO_LINKS);
@@ -166,7 +166,9 @@ export function createReviews({ env, auth, file }) {
     try {
       const origin = req.headers.origin;
       if (req.method !== 'GET' && origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'Запрос с чужого сайта' });
-      if (!(await auth.userFrom(req))) return send(res, 401, { error: 'Нужно войти' });
+      const user = await auth.userFrom(req);
+      if (!user) return send(res, 401, { error: 'Нужно войти' });
+      if (access && !(await access.allowed(user, 'reviews'))) return send(res, 403, { error: 'Раздел закрыт для вашей роли' });
 
       if (url.pathname === '/api/reviews' && req.method === 'GET') return send(res, 200, view(await load()));
 
